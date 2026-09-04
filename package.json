@@ -10,7 +10,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "db:seed": "bun build --target=node --outfile=/tmp/delta-hackathon-seed.js lib/db/seed.ts && node /tmp/delta-hackathon-seed.js"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.9.1",
