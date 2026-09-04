@@ -1,138 +1,56 @@
-import type {
-  AlertRuleKey,
-  BusinessSettings,
-  DomainAlert,
-} from "./types";
-import { availableInventory, remainingCapacityMinutes } from "./inventory-capacity-cash";
+import { computeCashForecast } from "./cash";
+import { getCapacitySeverity, getCapacityUsagePercent, getRemainingCapacityHours } from "./capacity";
+import { getInventorySeverity } from "./inventory";
+import type { Alert, DomainState } from "./types";
+import { round2 } from "./calculations";
 
-export interface AlertEvaluationInput {
-  productName: string;
-  quantity: number;
-  onHand: number;
-  reserved: number;
-  safetyStock: number;
-  profitMarginValue: number;
-  operatingProfitValue: number;
-  totalCapacityMinutes: number;
-  bookedCapacityMinutes: number;
-  requiredCapacityMinutes: number;
-  capacityUtilizationValue: number;
-  projectedCashValue: number;
-  settings: BusinessSettings;
-}
-
-function ruleEnabled(settings: BusinessSettings, ruleKey: AlertRuleKey): boolean {
-  return settings.alertToggles[ruleKey] !== false;
-}
-
-/**
- * Evaluates all alert rules against a scenario. Every threshold comes from
- * management settings — nothing is hardcoded. Disabled rules are skipped.
- */
-export function evaluateAlerts(input: AlertEvaluationInput): DomainAlert[] {
-  const { settings } = input;
-  const alerts: DomainAlert[] = [];
-  const available = availableInventory({ onHand: input.onHand, reserved: input.reserved });
-  const remainingCapacity = remainingCapacityMinutes({
-    month: "",
-    totalMinutes: input.totalCapacityMinutes,
-    bookedMinutes: input.bookedCapacityMinutes,
-  });
-
-  if (ruleEnabled(settings, "inventoryShortage") && input.quantity > available) {
-    alerts.push({
-      ruleKey: "inventoryShortage",
-      severity: "critical",
-      title: "Inventory shortage",
-      message: `Requested ${input.quantity} units of ${input.productName} but only ${available} are available.`,
-      cause: `Available stock (${available}) is lower than the requested quantity (${input.quantity}).`,
-      impact: `The sale cannot be fulfilled from stock; shortfall of ${input.quantity - available} units.`,
-      suggestedCorrection:
-        "Reduce the quantity, restock the product, or unreserve stock from other commitments.",
-    });
+export function computeAlerts(state: DomainState): Alert[] {
+  const alerts: Alert[] = [];
+  if (state.settings.inventoryAlertsEnabled) {
+    for (const product of state.products) {
+      const available = state.inventory[product.id]?.available ?? 0;
+      const severity = getInventorySeverity(available, product.safetyStock);
+      if (severity) {
+        alerts.push({
+          id: `inv-${product.id}`,
+          title: `${severity} — موجودی ${product.name}`,
+          severity,
+          category: "موجودی",
+          reason: `موجودی آزاد (${available}) کمتر از موجودی ایمن (${product.safetyStock}) است.`,
+          effect: available < 0 ? `کسری ${Math.abs(available)} واحد.` : `فاصله تا موجودی ایمن: ${Math.max(product.safetyStock - available, 0)} واحد.`,
+          suggestion: "کاهش تعداد فروش جدید، تغییر موعد تحویل یا اصلاح موجودی.",
+        });
+      }
+    }
   }
-
-  if (
-    ruleEnabled(settings, "safetyStockViolation") &&
-    input.quantity <= available &&
-    available - input.quantity < input.safetyStock
-  ) {
-    alerts.push({
-      ruleKey: "safetyStockViolation",
-      severity: "risk",
-      title: "Safety stock violation",
-      message: `Selling ${input.quantity} units of ${input.productName} leaves ${available - input.quantity} in stock, below the safety stock of ${input.safetyStock}.`,
-      cause: `Post-sale stock (${available - input.quantity}) falls below the product's safety stock (${input.safetyStock}).`,
-      impact: "No buffer remains for unexpected demand or supply delays.",
-      suggestedCorrection: "Reduce the quantity or schedule a restock before fulfilling this sale.",
-    });
+  if (state.settings.capacityAlertsEnabled) {
+    const usage = getCapacityUsagePercent(state);
+    const severity = getCapacitySeverity(usage, state.settings.capacityThresholds);
+    if (severity) {
+      alerts.push({
+        id: "capacity",
+        title: `${severity} — مصرف ظرفیت نصب`,
+        severity,
+        category: "ظرفیت",
+        reason: `مصرف ظرفیت نصب به ${round2(usage)}٪ رسیده است.`,
+        effect: `ظرفیت باقی‌مانده: ${round2(getRemainingCapacityHours(state))} ساعت.`,
+        suggestion: "افزایش ظرفیت نصب یا تغییر موعد سفارش‌های در صف.",
+      });
+    }
   }
-
-  if (
-    ruleEnabled(settings, "capacityShortage") &&
-    input.requiredCapacityMinutes > remainingCapacity
-  ) {
-    alerts.push({
-      ruleKey: "capacityShortage",
-      severity: "critical",
-      title: "Installation capacity shortage",
-      message: `This sale needs ${input.requiredCapacityMinutes} installation minutes but only ${remainingCapacity} remain in the period.`,
-      cause: `Required installation time (${input.requiredCapacityMinutes} min) exceeds remaining capacity (${remainingCapacity} min).`,
-      impact: "The installation cannot be scheduled within the period.",
-      suggestedCorrection:
-        "Move the installation to a later period, add capacity, or reduce the quantity.",
-    });
+  if (state.settings.cashAlertsEnabled) {
+    const forecast = computeCashForecast(state.cash);
+    if (forecast.minBalance < state.settings.minOperatingCash) {
+      alerts.push({
+        id: "cash",
+        title: "بحرانی — کسری نقدینگی پیش‌بینی‌شده",
+        severity: "بحرانی",
+        category: "مالی",
+        reason: `کمترین مانده نقد پیش‌بینی‌شده (${Math.round(forecast.minBalance)}) کمتر از حداقل نقد عملیاتی است.`,
+        effect: `تاریخ کمترین مانده: ${forecast.minBalanceDate}.`,
+        suggestion: "تسریع در وصول مطالبات یا تعویق پرداخت‌های غیرضروری.",
+      });
+    }
   }
-
-  if (
-    ruleEnabled(settings, "capacityPressure") &&
-    input.requiredCapacityMinutes <= remainingCapacity &&
-    input.capacityUtilizationValue >= settings.capacityWarningThreshold
-  ) {
-    const critical = input.capacityUtilizationValue >= settings.capacityCriticalThreshold;
-    alerts.push({
-      ruleKey: "capacityPressure",
-      severity: critical ? "critical" : "risk",
-      title: "Installation capacity pressure",
-      message: `Capacity utilization would reach ${input.capacityUtilizationValue}% (threshold: ${settings.capacityWarningThreshold}%).`,
-      cause: `Booked installation time after this sale reaches ${input.capacityUtilizationValue}% of the period's capacity.`,
-      impact: "Little room remains for additional installations in this period.",
-      suggestedCorrection: "Plan extra capacity or spread installations across periods.",
-    });
-  }
-
-  if (
-    ruleEnabled(settings, "marginBelowTarget") &&
-    input.profitMarginValue < settings.targetProfitMargin
-  ) {
-    const loss = input.operatingProfitValue < 0;
-    alerts.push({
-      ruleKey: "marginBelowTarget",
-      severity: loss ? "critical" : "risk",
-      title: "Profit margin below target",
-      message: `Profit margin of ${input.profitMarginValue}% is below the target of ${settings.targetProfitMargin}%.`,
-      cause: `At this price and cost structure the deal earns ${input.profitMarginValue}% (target: ${settings.targetProfitMargin}%).`,
-      impact: loss
-        ? `The deal loses money (operating profit ${input.operatingProfitValue}).`
-        : "The deal underperforms the profitability target.",
-      suggestedCorrection: "Raise the unit price, lower costs, or increase the quantity.",
-    });
-  }
-
-  if (
-    ruleEnabled(settings, "cashBelowMinimum") &&
-    input.projectedCashValue < settings.minimumOperationalCash
-  ) {
-    alerts.push({
-      ruleKey: "cashBelowMinimum",
-      severity: "critical",
-      title: "Cash below minimum operational level",
-      message: `Projected cash of ${input.projectedCashValue} is below the minimum operational cash of ${settings.minimumOperationalCash}.`,
-      cause: "Expected cash movements push the balance under the configured safety floor.",
-      impact: "The business may be unable to cover operational expenses.",
-      suggestedCorrection: "Collect receivables sooner, delay expenses, or secure short-term financing.",
-    });
-  }
-
   return alerts;
 }

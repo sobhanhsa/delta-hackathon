@@ -1,69 +1,36 @@
-/**
- * Centralized business calculations.
- *
- * Pure functions only. Every business-impacting parameter (prices, costs,
- * shipping rates, thresholds) is passed in — nothing is hardcoded here.
- */
+import type { DealMetrics, Product, Settings } from "./types";
 
-export function roundMoney(value: number): number {
-  return Math.round((value + Number.EPSILON) * 100) / 100;
-}
+export const round2 = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
+export const priceFromDiscount = (basePrice: number, discountPercent: number) =>
+  round2(basePrice * (1 - discountPercent / 100));
+export const discountFromPrice = (basePrice: number, unitPrice: number) =>
+  basePrice ? round2((1 - unitPrice / basePrice) * 100) : 0;
+export const computeRevenue = (quantity: number, unitPrice: number) => quantity * unitPrice;
+export const computeCogs = (quantity: number, unitCost: number) => quantity * unitCost;
+export const computeShipping = (quantity: number, settings: Settings) =>
+  settings.shippingFlatFee + settings.shippingPerUnitFee * quantity;
+export const computeInstallHours = (quantity: number, minutesPerUnit: number) =>
+  (quantity * minutesPerUnit) / 60;
+export const computeProfit = (revenue: number, cogs: number, shipping: number) =>
+  revenue - cogs - shipping;
+export const computeMargin = (profit: number, revenue: number) => revenue ? (profit / revenue) * 100 : 0;
 
-export function round2(value: number): number {
-  return Math.round((value + Number.EPSILON) * 100) / 100;
-}
-
-/** Revenue = quantity × unit price */
-export function revenue(quantity: number, unitPrice: number): number {
-  return roundMoney(quantity * unitPrice);
-}
-
-/** Product Cost = quantity × unit cost */
-export function productCost(quantity: number, unitCost: number): number {
-  return roundMoney(quantity * unitCost);
-}
-
-/** Shipping Cost = fixed shipping cost + (shipping cost per unit × quantity) */
-export function shippingCost(
-  fixedShippingCost: number,
-  shippingCostPerUnit: number,
-  quantity: number,
-): number {
-  return roundMoney(fixedShippingCost + shippingCostPerUnit * quantity);
-}
-
-/** Installation Hours = quantity × installation minutes per unit ÷ 60 */
-export function installationHours(
-  quantity: number,
-  installationMinutesPerUnit: number,
-): number {
-  return round2((quantity * installationMinutesPerUnit) / 60);
-}
-
-/** Installation minutes needed (exact, no rounding to hours). */
-export function installationMinutes(
-  quantity: number,
-  installationMinutesPerUnit: number,
-): number {
-  return quantity * installationMinutesPerUnit;
-}
-
-/** Operating Profit = revenue − product cost − shipping cost */
-export function operatingProfit(
-  revenueValue: number,
-  productCostValue: number,
-  shippingCostValue: number,
-): number {
-  return roundMoney(revenueValue - productCostValue - shippingCostValue);
-}
-
-/**
- * Profit Margin = operating profit ÷ revenue × 100
- *
- * Zero or negative revenue means the margin is meaningless; returns 0 and
- * callers should rely on operatingProfit (negative = loss) instead.
- */
-export function profitMargin(operatingProfitValue: number, revenueValue: number): number {
-  if (revenueValue <= 0) return 0;
-  return round2((operatingProfitValue / revenueValue) * 100);
+export function evaluateDeal(input: {
+  quantity: number;
+  unitPrice: number;
+  product: Product;
+  settings: Settings;
+}): DealMetrics {
+  const revenue = computeRevenue(input.quantity, input.unitPrice);
+  const cogs = computeCogs(input.quantity, input.product.unitCost);
+  const shipping = computeShipping(input.quantity, input.settings);
+  const profit = computeProfit(revenue, cogs, shipping);
+  return {
+    revenue,
+    cogs,
+    shipping,
+    profit,
+    margin: computeMargin(profit, revenue),
+    installHours: computeInstallHours(input.quantity, input.product.installMinutesPerUnit),
+  };
 }

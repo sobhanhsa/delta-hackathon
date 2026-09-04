@@ -1,34 +1,71 @@
-import type { BusinessSettings } from "./types";
-import type { DomainAlert } from "./alerts";
-import { buildBusinessStateSnapshot } from "./analysis";
+export type Severity = "اطلاع" | "خطر" | "بحرانی";
+export type FeasibilityStatus = "قابل انجام" | "مشروط" | "غیرقابل انجام در شرایط فعلی";
 
-export interface OpportunityImpactInput {
-  product: ProductFacts;
-  quantity: number;
-  /** Optional price override; defaults to the product's price. */
-  unitPrice?: number;
-  inventory: InventoryFacts;
-  capacity: CapacityFacts;
-  cash: CashFacts;
-  settings: BusinessSettings;
+export interface Product {
+  id: string;
+  name: string;
+  basePrice: number;
+  unitCost: number;
+  safetyStock: number;
+  installMinutesPerUnit: number;
 }
 
-export interface OpportunityImpact {
-  productId: number;
+export interface Order {
+  id: string;
+  productId: string;
   quantity: number;
-  unitPrice: number;
+}
+
+export interface Receipt { id: string; amount: number; date: string }
+export interface Payment { id: string; amount: number; date: string }
+export interface Expense { id: string; amount: number; date: string; description: string }
+
+export interface Capacity {
+  totalHours: number;
+}
+
+export interface Cash {
+  balance: number;
+  receipts: Receipt[];
+  payments: Payment[];
+  expenses: Expense[];
+}
+
+export interface Settings {
+  targetMarginPercent: number;
+  minOperatingCash: number;
+  shippingFlatFee: number;
+  shippingPerUnitFee: number;
+  capacityThresholds: { info: number; warning: number; critical: number };
+  inventoryAlertsEnabled: boolean;
+  capacityAlertsEnabled: boolean;
+  cashAlertsEnabled: boolean;
+}
+
+export interface DomainState {
+  products: Product[];
+  orders: Order[];
+  inventory: Record<string, { available: number }>;
+  capacity: Capacity;
+  cash: Cash;
+  settings: Settings;
+}
+
+export interface DealMetrics {
   revenue: number;
-  productCost: number;
-  shippingCost: number;
-  operatingProfit: number;
-  profitMargin: number;
-  installationHours: number;
-  availableInventory: number;
-  remainingInventory: number;
-  remainingCapacityMinutes: number;
-  capacityUtilization: number;
-  cashBalance: number;
-  projectedCashBalance: number;
-  feasibility: Feasibility;
-  alerts: DomainAlert[];
+  cogs: number;
+  shipping: number;
+  profit: number;
+  margin: number;
+  installHours: number;
+}
+
+export interface Alert {
+  id: string;
+  title: string;
+  severity: Severity;
+  category: "موجودی" | "ظرفیت" | "مالی";
+  reason: string;
+  effect: string;
+  suggestion: string;
 }
